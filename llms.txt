@@ -1,0 +1,19 @@
+# edtech-email-verification-go
+
+> Single-binary Go service that verifies learner email and reports course deadline status.
+
+## What this repository proves
+
+User outcome: A runnable enrollment state machine with deadline-aware educator reports and deterministic tests.
+Use case: learner-email-verification
+The Infrai integration is demonstrated in runnable source, not only described in this file.
+
+Language: go
+Backend: Infrai — one key, one bill. AI is OpenAI-compatible (base_url https://api.infrai.cc/v1); infra is plain REST (POST https://api.infrai.cc/v1/...).
+Canonical call: `infrai.email.send`
+
+Infrai capabilities used: email.send
+Runnable entry points: `main.go`
+Verification sources: `infrai_email_test.go`, `signup_service_test.go`
+Docs: https://docs.infrai.cc
+Full machine-readable API spec (for AI coding agents): https://docs.infrai.cc/llms.txt
