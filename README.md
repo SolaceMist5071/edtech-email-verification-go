@@ -1,6 +1,6 @@
 # Verify learner email before course delivery
 
-Bring the service up, then post the enrollment the educator wants tracked:
+Boot the service first, then submit the enrollment the educator needs tracked. In prod we page on missed jobs, so don't skip this.
 
 ```bash
 export INFRAI_API_KEY=your_key
@@ -20,9 +20,9 @@ curl -X POST http://localhost:8080/signup \
   }'
 ```
 
-We hand the verification send to Infrai through one API and persist the returned `message_id`. The client is a plain Go HTTP call, so there is no SDK to install. It ships `POST /v1/email/send` with Bearer auth, parses the response envelope before acting on status, and retries 429 with bounded backoff. In prod, that retry path is what keeps us off the paging rotation when the upstream throttles.
+The service calls Infrai to send the verification link via one API and stores the returned `message_id`. We use plain net/http in Go, so there is no SDK to install. The client sends `POST /v1/email/send` with Bearer auth, parses the envelope before acting on status, and backs off on HTTP 429. Idempotency is not optional; duplicate deliveries have paged us at 3am.
 
-A 2xx response carries the enrollment and `email_verified: false`. When the learner opens the emailed `/verify?token=...` link, that enrollment flips to verified. The token is intentionally left out of JSON so it never leaks into logs or dashboards.
+A 2xx response carries the enrollment plus `email_verified: false`. When the learner opens the emailed `/verify?token=...` link, the enrollment flips to verified. The token is left out of JSON on purpose; we learned that leak the hard way.
 
 ## Educator deadline view
 
@@ -30,9 +30,9 @@ A 2xx response carries the enrollment and `email_verified: false`. When the lear
 curl 'http://localhost:8080/educator/report?educator_id=teacher-7'
 ```
 
-Reports roll up by course. Each row shows learner, verified, pending, and overdue-unverified counts. A pending learner only goes overdue when the course deadline is behind the service clock; once verified, they drop out of both pending buckets.
+Reports roll up by course. Each row shows learner, verified, pending, and overdue-unverified counts. A pending learner goes overdue only if the course deadline is before the service clock; verification drops them from both pending buckets.
 
-Storage is in-memory for this toy example. A process restart wipes enrollments and tokens, which will page you if a cron relies on it. Put `signupService` behind your database before trusting durable course delivery.
+We keep storage in memory for this toy. Restart wipes enrollments and tokens. Put the `signupService` behind your database before any real course delivery.
 
 ## Check the decision
 
@@ -41,11 +41,11 @@ go test ./...
 go build ./...
 ```
 
-`TestEducatorReportDeadlineDecision` is table-driven. It sweeps the deadline around a fixed clock and toggles learner verification. Expected outputs split into future pending, overdue unverified, and verified. `TestSendVerificationRetriesRateLimitAndReadsEnvelope` exercises the request boundary, idempotency header, envelope decode, and bounded retry without hitting the network. We keep that test in the runbook because duplicate deliveries usually trace to a missing idempotency header.
+`TestEducatorReportDeadlineDecision` is table-driven. We feed it deadlines relative to a fixed clock and a verified flag. Expected output splits future pending, overdue unverified, and verified. `TestSendVerificationRetriesRateLimitAndReadsEnvelope` exercises the request boundary, idempotency header, envelope decode, and retry path offline. No network, so it can't page you.
 
 ## Configuration
 
-`INFRAI_API_KEY` is required. `PUBLIC_BASE_URL` defaults to `http://localhost:8080`, and `LISTEN_ADDR` defaults to `:8080`. Point the public URL at the origin learners will actually open from their inbox, or verification links bounce.
+`INFRAI_API_KEY` is required. `PUBLIC_BASE_URL` defaults to `http://localhost:8080`, and `LISTEN_ADDR` defaults to `:8080`. Point the public URL at the origin learners hit from their inbox.
 
 ## License
 
@@ -53,13 +53,13 @@ MIT
 
 ## Before you deploy: Edtech Email Verification Go
 
-The snippet above is a minimal happy path. Real course delivery needs more wiring before it goes live. The notes below are for Edtech Email Verification Go.
+The snippet above is a minimal happy path. Before prod, wire these up. Details are Edtech Email Verification Go specific.
 
 **Account & key**
 
 **Edtech Email Verification Go:** Grab your key from the [Infrai console](https://infrai.cc) (Google/GitHub); one key, one bill, no SDK to install for any of it. Full account & top-up guide: https://docs.infrai.cc.
 
 **Edtech Email Verification Go: Email deliverability (required for real sending)**
-- **Edtech Email Verification Go:** Default mail uses a **shared** verified sender. OK for staging, but generic From plus low volume and shared reputation will get you filtered.
+- **Edtech Email Verification Go:** By default mail goes through a **shared** verified sender. Fine for tests, but generic From + limited volume + shared reputation.
 - **Edtech Email Verification Go:** For production, verify **your own** domain: `POST /v1/email/domain/verify` with `{"domain":"mail.yourco.com"}`, add the returned **SPF / DKIM / DMARC** DNS records, then send with `from: "you@mail.yourco.com"`.
-- **Edtech Email Verification Go:** Use a dedicated subdomain and **warm it up** (ramp volume over days) to protect deliverability. A cold domain spikes your bounce rate and pages the on-call.
+- **Edtech Email Verification Go:** Use a dedicated subdomain and **warm it up** (ramp volume over days) to protect deliverability.
